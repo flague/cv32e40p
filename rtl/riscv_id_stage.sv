@@ -130,7 +130,17 @@ module riscv_id_stage
     output logic        alu_is_subrot_ex_o,
     output logic [ 1:0] alu_clpx_shift_ex_o,
 
-
+    //PLACEHOLDER: approximate ALU
+    output logic [N_BIT_APPR-1:0]   alu_approx_mask_o,
+    output logic [N_BIT_PREC-1:0]   alu_precision_mask_o,
+    output logic                    alu_approx_en_ex_o,
+    output logic [APP_OP_WIDTH-1:0] alu_approx_operator_o,
+    output logic [31:0]             alu_approx_operand_a_ex_o,
+    output logic [31:0]             alu_approx_operand_b_ex_o,
+    output logic [31:0]             alu_approx_operand_c_ex_o,
+    output logic [ 4:0]             alu_approx_mult_imm_ex_o,
+    output logic [ 1:0]             alu_approx_mult_signed_ex_o,
+    output logic [ 1:0]             alu_approx_dot_signed_ex_o,
     // MUL
     output logic [ 2:0] mult_operator_ex_o,
     output logic [31:0] mult_operand_a_ex_o,
@@ -183,6 +193,16 @@ module riscv_id_stage
     output logic        csr_restore_dret_id_o,
 
     output logic        csr_save_cause_o,
+
+    // PLACEHOLDER: CSR interface
+    input logic         csr_approx_mul_i,
+    // input logic         csr_approx_add_i,
+    input logic         csr_approx_mac_i,
+    input logic         csr_approx_dot8_i,
+    input logic [N_BIT_APPR-1:0] csr_approx_mask_i,
+    input logic [N_BIT_PREC-1:0] csr_precision_mask_i,
+    //input logic         csr_approx_pmul_i,
+    //input logic         csr_approx_pmac_i,
 
     // hwloop signals
     output logic [N_HWLP-1:0] [31:0] hwlp_start_o,
@@ -342,6 +362,11 @@ module riscv_id_stage
   logic [3:0]  imm_b_mux_sel;
   logic [1:0]  jump_target_mux_sel;
 
+  //PLACEHOLDER: ALU approximate control
+  logic        alu_approx_en;
+  logic [APP_OP_WIDTH-1:0] alu_approx_operator;
+  logic [N_BIT_APPR-1:0]   alu_approx_mask;
+  logic [N_BIT_PREC-1:0]   alu_precision_mask;
   // Multiplier Control
   logic [2:0]  mult_operator;    // multiplication operation selection
   logic        mult_en;          // multiplication is used instead of ALU
@@ -1123,6 +1148,21 @@ module riscv_id_stage
     .csr_op_o                        ( csr_op                    ),
     .current_priv_lvl_i              ( current_priv_lvl_i        ),
 
+    // PLACEHOLDER: CSR and APPR. ALU interface
+
+    .approx_mul_i                    ( csr_approx_mul_i          ),
+    //.approx_add_i                  ( csr_approx_add_i          ),
+    .approx_mac_i                    ( csr_approx_mac_i          ),
+    .approx_dot8_i                   ( csr_approx_dot8_i         ),
+    .approx_mask_i                   ( csr_approx_mask_i         ),
+    .precision_mask_i                ( csr_precision_mask_i      ),
+    //.approx_pmul_i                 ( csr_approx_pmul_i         ),
+    //.approx_pmac_i                 ( csr_approx_pmac_i         ),
+    .alu_approx_en_o                 ( alu_approx_en             ),
+    .alu_approx_operator_o           ( alu_approx_operator       ),
+    .approx_mask_o                   ( alu_approx_mask           ),
+    .precision_mask_o                ( alu_precision_mask        ),
+    
     // Data bus interface
     .data_req_o                      ( data_req_id               ),
     .data_we_o                       ( data_we_id                ),
@@ -1408,10 +1448,20 @@ module riscv_id_stage
     if (rst_n == 1'b0)
     begin
       alu_en_ex_o                 <= '0;
+      alu_approx_en_ex_o          <= '0;    //PLACEHOLDER:verify
+      alu_approx_operator_o       <= APP_MULMAC; 
+      alu_precision_mask_o        <= '0;
+      alu_approx_mask_o           <= '0;
       alu_operator_ex_o           <= ALU_SLTU;
       alu_operand_a_ex_o          <= '0;
       alu_operand_b_ex_o          <= '0;
       alu_operand_c_ex_o          <= '0;
+      alu_approx_operand_a_ex_o   <= '0;
+      alu_approx_operand_b_ex_o   <= '0;
+      alu_approx_operand_c_ex_o   <= '0;
+      alu_approx_mult_signed_ex_o <= 2'b00;
+      alu_approx_mult_imm_ex_o    <= '0;
+      alu_approx_dot_signed_ex_o  <= '0;
       bmask_a_ex_o                <= '0;
       bmask_b_ex_o                <= '0;
       imm_vec_ext_ex_o            <= '0;
@@ -1514,7 +1564,19 @@ module riscv_id_stage
           alu_clpx_shift_ex_o       <= instr[14:13];
           alu_is_subrot_ex_o        <= is_subrot;
         end
-
+        alu_approx_en_ex_o          <= alu_approx_en; //PLACEHOLDER
+        if (alu_approx_en) begin    //PLACEHOLDER: leave only the useful signals for approx ALU
+          alu_approx_operator_o     <= alu_approx_operator;
+          alu_approx_mask_o         <= alu_approx_mask;
+          alu_precision_mask_o      <= alu_precision_mask;
+          alu_approx_operand_a_ex_o <= alu_operand_a;
+          alu_approx_operand_b_ex_o <= alu_operand_b;
+          alu_approx_operand_c_ex_o <= alu_operand_c;
+          alu_approx_mult_signed_ex_o <= mult_signed_mode;//CHECK, maybe not required, already extended on 16 bit
+          alu_approx_mult_imm_ex_o  <= mult_imm_id; //for macs and muls
+          alu_approx_dot_signed_ex_o  <= mult_dot_signed;
+        end
+        
         mult_en_ex_o                <= mult_en;
         if (mult_int_en) begin
           mult_operator_ex_o        <= mult_operator;
@@ -1607,6 +1669,7 @@ module riscv_id_stage
 
         alu_en_ex_o                 <= 1'b1;
 
+        alu_approx_en_ex_o          <= 1'b0;    //CHECK: disable approx ALU
       end else if (csr_access_ex_o) begin
        //In the EX stage there was a CSR access, to avoid multiple
        //writes to the RF, disable regfile_alu_we_ex_o.
@@ -1638,7 +1701,7 @@ module riscv_id_stage
     // and that EX stage is ready to receive flushed instruction immediately
     property p_branch_taken_ex;
       @(posedge clk) disable iff (!rst_n) (branch_taken_ex == 1'b1) |-> ((ex_ready_i == 1'b1) &&
-                                                                         (alu_en == 1'b0) && (apu_en == 1'b0) &&
+                                                                         (alu_en == 1'b0) && (alu_approx_en == 1'b0) && (apu_en == 1'b0) &&
                                                                          (mult_en == 1'b0) && (mult_int_en == 1'b0) &&
                                                                          (mult_dot_en == 1'b0) && (regfile_we_id == 1'b0) &&
                                                                          (regfile_alu_we_id == 1'b0) && (data_req_id == 1'b0));

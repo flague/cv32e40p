@@ -31,13 +31,13 @@
 
 import apu_core_package::*;
 
-`include "riscv_config.sv"
+`include "include/riscv_config.sv"
 
 import riscv_defines::*;
 
 module riscv_core
 #(
-  parameter N_EXT_PERF_COUNTERS =  0,
+  parameter N_EXT_PERF_COUNTERS =  1,
   parameter INSTR_RDATA_WIDTH   = 32,
   parameter PULP_SECURE         =  0,
   parameter N_PMP_ENTRIES       = 16,
@@ -52,10 +52,11 @@ module riscv_core
   parameter SHARED_INT_DIV      =  0,
   parameter SHARED_FP_DIVSQRT   =  0,
   parameter WAPUTYPE            =  0,
-  parameter APU_NARGS_CPU       =  3,
-  parameter APU_WOP_CPU         =  6,
-  parameter APU_NDSFLAGS_CPU    = 15,
-  parameter APU_NUSFLAGS_CPU    =  5,
+  parameter APU_NARGS_CPU       =  3,   //2,
+  parameter APU_WOP_CPU         =  6,   //1,
+  parameter APU_NDSFLAGS_CPU    =  15,  //3,
+  parameter APU_NUSFLAGS_CPU    =  5,   //5,
+  parameter MUL_BIT             =  9,
   parameter DM_HaltAddress      = 32'h1A110800
 )
 (
@@ -195,10 +196,22 @@ module riscv_core
   logic [31:0] mult_dot_op_b_ex;
   logic [31:0] mult_dot_op_c_ex;
   logic [ 1:0] mult_dot_signed_ex;
-  logic        mult_is_clpx_ex_o;
+  //logic        mult_is_clpx_ex_o;
+  logic        mult_is_clpx_ex;
   logic [ 1:0] mult_clpx_shift_ex;
   logic        mult_clpx_img_ex;
 
+  //PLACEHOLDER: Approximate ALU control
+  logic [N_BIT_APPR-1:0]      alu_approx_mask;
+  logic [N_BIT_PREC-1:0]      alu_precision_mask;
+  logic [APP_OP_WIDTH-1:0]    alu_approx_operator;
+  logic                       alu_approx_en;
+  logic [31:0]                alu_approx_operand_a;
+  logic [31:0]                alu_approx_operand_b;
+  logic [31:0]                alu_approx_operand_c;
+  logic [ 1:0]                alu_approx_mult_signed;
+  logic [ 1:0]                alu_approx_dot_signed;
+  logic [ 4:0]                alu_approx_mult_imm;
   // FPU
   logic [C_PC-1:0]            fprec_csr;
   logic [C_RM-1:0]            frm_csr;
@@ -254,6 +267,15 @@ module riscv_core
   logic [31:0] csr_rdata;
   logic [31:0] csr_wdata;
   PrivLvl_t    current_priv_lvl;
+
+  //PLACEHOLDER: CSR to id connection
+  logic                        csr_approx_mul;
+  //logic                      csr_approx_add;
+  logic                        csr_approx_mac;
+  logic                        csr_approx_dot8;
+  logic [N_BIT_APPR-1:0]       csr_approx_mask;
+  logic [N_BIT_PREC-1:0]       csr_precision_mask;
+  //logic        csr_approx_pmac;
 
   // Data Memory Control:  From ID stage (id-ex pipe) <--> load store unit
   logic        data_we_ex;
@@ -628,6 +650,17 @@ module riscv_core
     .regfile_alu_we_ex_o          ( regfile_alu_we_ex    ),
     .regfile_alu_waddr_ex_o       ( regfile_alu_waddr_ex ),
 
+    // PLACEHOLDER: approximate ALU
+    .alu_approx_mask_o            ( alu_approx_mask      ),
+    .alu_precision_mask_o         ( alu_precision_mask   ),
+    .alu_approx_en_ex_o           ( alu_approx_en        ),
+    .alu_approx_operator_o        ( alu_approx_operator  ),
+    .alu_approx_operand_a_ex_o    ( alu_approx_operand_a ),
+    .alu_approx_operand_b_ex_o    ( alu_approx_operand_b ),
+    .alu_approx_operand_c_ex_o    ( alu_approx_operand_c ),
+    .alu_approx_mult_imm_ex_o     ( alu_approx_mult_imm  ),
+    .alu_approx_mult_signed_ex_o  ( alu_approx_mult_signed ),
+    .alu_approx_dot_signed_ex_o   ( alu_approx_dot_signed),
     // MUL
     .mult_operator_ex_o           ( mult_operator_ex     ), // from ID to EX stage
     .mult_en_ex_o                 ( mult_en_ex           ), // from ID to EX stage
@@ -683,6 +716,15 @@ module riscv_core
 
     .csr_save_cause_o             ( csr_save_cause       ),
 
+    //PLACEHOLDER: CSR if
+    .csr_approx_mul_i              ( csr_approx_mul      ),
+    //.csr_approx_add_i              ( csr_approx_add      ),
+    .csr_approx_mac_i              ( csr_approx_mac      ),
+    .csr_approx_dot8_i             ( csr_approx_dot8     ),
+    .csr_approx_mask_i             ( csr_approx_mask     ),
+    .csr_precision_mask_i          ( csr_precision_mask  ),
+    
+    
     // hardware loop signals to IF hwlp controller
     .hwlp_start_o                 ( hwlp_start           ),
     .hwlp_end_o                   ( hwlp_end             ),
@@ -763,7 +805,8 @@ module riscv_core
    .APU_NARGS_CPU    ( APU_NARGS_CPU      ),
    .APU_WOP_CPU      ( APU_WOP_CPU        ),
    .APU_NDSFLAGS_CPU ( APU_NDSFLAGS_CPU   ),
-   .APU_NUSFLAGS_CPU ( APU_NUSFLAGS_CPU   )
+   .APU_NUSFLAGS_CPU ( APU_NUSFLAGS_CPU   ),
+   .MUL_BIT          ( MUL_BIT            )
   )
   ex_stage_i
   (
@@ -804,6 +847,18 @@ module riscv_core
 
     .mult_multicycle_o          ( mult_multicycle              ), // to ID/EX pipe registers
 
+   // PLACEHOLDER: ALU Approx signals from ID stage
+    .alu_approx_en_i            ( alu_approx_en                ),
+    .alu_approx_operator_i      ( alu_approx_operator          ),
+    .alu_approx_mask_i          ( alu_approx_mask              ),
+    .alu_precision_mask_i       ( alu_precision_mask           ),
+    .alu_approx_operand_a_i     ( alu_approx_operand_a         ),
+    .alu_approx_operand_b_i     ( alu_approx_operand_b         ),
+    .alu_approx_operand_c_i     ( alu_approx_operand_c         ),
+    .alu_approx_mult_imm_i      ( alu_approx_mult_imm          ),
+    .alu_approx_mult_signed_i   ( alu_approx_mult_signed       ),
+    .alu_approx_dot_signed_i    ( alu_approx_dot_signed        ),
+    
     // FPU
     .fpu_prec_i                 ( fprec_csr                    ),
     .fpu_fflags_o               ( fflags                       ),
@@ -1023,6 +1078,13 @@ module riscv_core
     .hwlp_we_o               ( csr_hwlp_we        ),
     .hwlp_data_o             ( csr_hwlp_data      ),
 
+    // PLACEHOLDER: conf signals for decoder
+    .approx_mul_o            ( csr_approx_mul     ), 
+    //.approx_add_o            ( csr_approx_add     ),
+    .approx_mac_o            ( csr_approx_mac     ),
+    .approx_dot8_o           ( csr_approx_dot8    ),
+    .approx_mask_o           ( csr_approx_mask    ),
+    .precision_mask_o        ( csr_precision_mask ),
     // performance counter related signals
     .id_valid_i              ( id_valid           ),
     .is_compressed_i         ( is_compressed_id   ),

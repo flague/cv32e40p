@@ -121,6 +121,12 @@ module riscv_cs_registers
   output logic [N_HWLP_BITS-1:0]   hwlp_regid_o,
   output logic [2:0]               hwlp_we_o,
 
+  //PLACEHOLDER: configuration signal for decoder for approx ops
+  output logic                     approx_mul_o,
+  output logic                     approx_mac_o,
+  output logic                     approx_dot8_o,
+  output logic [N_BIT_APPR-1:0]    approx_mask_o,
+  output logic [N_BIT_PREC-1:0]    precision_mask_o,
   // Performance Counters
   input  logic                 id_valid_i,        // ID stage is done
   input  logic                 is_compressed_i,   // compressed instruction in ID
@@ -259,6 +265,8 @@ module riscv_cs_registers
   Status_t mstatus_q, mstatus_n;
   logic [ 5:0] mcause_q, mcause_n;
   logic [ 5:0] ucause_q, ucause_n;
+  //PLACEHOLDER: temp signals, update logic new CSR
+  logic [31:0] approx_q, approx_n;
   //not implemented yet
   logic [23:0] mtvec_n, mtvec_q;
   logic [23:0] utvec_n, utvec_q;
@@ -349,6 +357,8 @@ if(PULP_SECURE==1) begin
       CSR_DSCRATCH1:
                csr_rdata_int = dscratch1_q;//
 
+      //PLACEHOLDER: MACHINE CSR non-standard
+      CSR_APPROX: csr_rdata_int = approx_q;   //read current value, if read instruction
       // hardware loops  (not official)
       HWLoop0_START: csr_rdata_int = hwlp_start_i[0];
       HWLoop0_END: csr_rdata_int = hwlp_end_i[0];
@@ -434,6 +444,9 @@ end else begin //PULP_SECURE == 0
       CSR_DSCRATCH1:
                csr_rdata_int = dscratch1_q;//
 
+      // PLACEHOLDER: MACHINE CSR non-standard
+      // should be commented if register is coded as USER CSR
+      CSR_APPROX: csr_rdata_int = approx_q;   //read current value, if read instruction
       // hardware loops  (not official)
       HWLoop0_START: csr_rdata_int = hwlp_start_i[0];
       HWLoop0_END: csr_rdata_int = hwlp_end_i[0];
@@ -480,6 +493,8 @@ if(PULP_SECURE==1) begin
     pmp_reg_n.pmpcfg_packed  = pmp_reg_q.pmpcfg_packed;
     pmpaddr_we               = '0;
     pmpcfg_we                = '0;
+    //PLACEHOLDER: leave CSR to its previous value if not addressed for write
+    approx_n                 = approx_q;
 
     if (FPU == 1) if (fflags_we_i) fflags_n = fflags_i | fflags_q;
 
@@ -551,6 +566,8 @@ if(PULP_SECURE==1) begin
                     dscratch1_n = csr_wdata_int;
                end
 
+      //PLACEHOLDER: write the register bits
+      CSR_APPROX:      if (csr_we_int) begin approx_n = csr_wdata_int; end
       // hardware loops
       HWLoop0_START:   if (csr_we_int) begin hwlp_we_o = 3'b001; hwlp_regid_o = 1'b0; end
       HWLoop0_END:     if (csr_we_int) begin hwlp_we_o = 3'b010; hwlp_regid_o = 1'b0; end
@@ -738,7 +755,8 @@ end else begin //PULP_SECURE == 0
     pmp_reg_n.pmpcfg_packed  = pmp_reg_q.pmpcfg_packed;
     pmpaddr_we               = '0;
     pmpcfg_we                = '0;
-
+    //PLACEHOLDER: not required if USER?
+    approx_n                 = approx_q;
 
     if (FPU == 1) if (fflags_we_i) fflags_n = fflags_i | fflags_q;
 
@@ -805,7 +823,9 @@ end else begin //PULP_SECURE == 0
                begin
                     dscratch1_n = csr_wdata_int;
                end
-
+      //PLACEHOLDER: write the register bits
+      //comment if USER mode register
+      CSR_APPROX:      if (csr_we_int) begin approx_n = csr_wdata_int; end
       // hardware loops
       HWLoop0_START: if (csr_we_int) begin hwlp_we_o = 3'b001; hwlp_regid_o = 1'b0; end
       HWLoop0_END: if (csr_we_int) begin hwlp_we_o = 3'b010; hwlp_regid_o = 1'b0; end
@@ -917,8 +937,12 @@ end //PULP_SECURE
   assign debug_single_step_o  = dcsr_q.step;
   assign debug_ebreakm_o      = dcsr_q.ebreakm;
   assign debug_ebreaku_o      = dcsr_q.ebreaku;
-
-
+  //PLACEHOLDER: need to directly output my reg value to be read by the decoder
+  assign approx_mul_o        = approx_q[0];
+  assign approx_mac_o        = approx_q[1];
+  assign approx_dot8_o       = approx_q[2];
+  assign approx_mask_o       = approx_q[3+N_BIT_APPR-1:3];
+  assign precision_mask_o    = approx_q[31:31-N_BIT_PREC+1];
 
   generate
   if (PULP_SECURE == 1)
@@ -971,7 +995,7 @@ end //PULP_SECURE
         end
 
   end
-  else begin
+  else begin    //PULP_SECURE=0
 
         assign uepc_q       = '0;
         assign ucause_q     = '0;
@@ -1010,6 +1034,8 @@ end //PULP_SECURE
       dscratch0_q <= '0;
       dscratch1_q <= '0;
       mscratch_q  <= '0;
+      //PLACEHOLDER: reset the custom CSR
+      approx_q    <= '0;
     end
     else
     begin
@@ -1039,6 +1065,8 @@ end //PULP_SECURE
       dscratch0_q<= dscratch0_n;
       dscratch1_q<= dscratch1_n;
       mscratch_q <= mscratch_n;
+      //PLACEHOLDER: update on CLK posedge
+      approx_q   <= approx_n;
     end
   end
 

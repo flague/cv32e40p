@@ -186,6 +186,17 @@ parameter VEC_MODE32 = 2'b00;
 parameter VEC_MODE16 = 2'b10;
 parameter VEC_MODE8  = 2'b11;
 
+// PLACEHOLDER: number of bits for multiplier mask
+parameter N_BIT_APPR = 8;
+parameter N_BIT_PREC = 14;
+
+// PLACEHOLDER: approximate ALU opcodes
+parameter APP_OP_WIDTH = 2;
+
+parameter APP_MULMAC   = 2'b00;
+parameter APP_MULSMACS = 3'b01;
+parameter APP_DOT8     = 3'b10;
+
 /////////////////////////////////////////////////////////
 //    ____ ____    ____            _     _             //
 //   / ___/ ___|  |  _ \ ___  __ _(_)___| |_ ___ _ __  //
@@ -428,6 +439,11 @@ parameter C_PC                = 5;
 //   \____|____/  |_| \_\                              //
 //                                                     //
 /////////////////////////////////////////////////////////
+
+
+//PLACEHOLDER: new CSR address
+//parameter CSR_APPROX            = 12'h810; //NON standard read/write (User CSRs)
+parameter CSR_APPROX            = 12'h7D0;
 
 //Hardware Loop
 parameter HWLoop0_START         = 12'h7C0; //NON standard read/write (Machine CSRs). Old address 12'h7B0;

@@ -32,7 +32,7 @@
 //                                                                            //
 ////////////////////////////////////////////////////////////////////////////////
 
-`include "apu_macros.sv"
+`include "include/apu_macros.sv"
 
 import apu_core_package::*;
 import riscv_defines::*;
@@ -47,7 +47,9 @@ module riscv_ex_stage
   parameter APU_NARGS_CPU    =  3,
   parameter APU_WOP_CPU      =  6,
   parameter APU_NDSFLAGS_CPU = 15,
-  parameter APU_NUSFLAGS_CPU =  5
+  parameter APU_NUSFLAGS_CPU =  5,
+  // PLACEHOLDER: choose approx mul and add
+  parameter MUL_BIT          = 9
 )
 (
   input  logic        clk,
@@ -86,6 +88,19 @@ module riscv_ex_stage
   input  logic        mult_clpx_img_i,
 
   output logic        mult_multicycle_o,
+
+  // ALU Approx signals from ID stage
+  input logic                         alu_approx_en_i,
+  input logic [APP_OP_WIDTH-1:0]      alu_approx_operator_i,
+  input logic [N_BIT_APPR-1:0]        alu_approx_mask_i,
+  input logic [N_BIT_PREC-1:0]        alu_precision_mask_i,
+  input logic [31:0]                  alu_approx_operand_a_i,
+  input logic [31:0]                  alu_approx_operand_b_i,
+  input logic [31:0]                  alu_approx_operand_c_i,
+  
+  input logic [ 4:0]                  alu_approx_mult_imm_i,
+  input logic [ 1:0]                  alu_approx_mult_signed_i,
+  input logic [ 1:0]                  alu_approx_dot_signed_i,
 
   // FPU signals
   input  logic [C_PC-1:0]             fpu_prec_i,
@@ -167,6 +182,8 @@ module riscv_ex_stage
 
   logic [31:0]    alu_result;
   logic [31:0]    mult_result;
+  //PLACEHOLDER
+  logic [31:0]    alu_approx_result;
   logic           alu_cmp_result;
 
   logic           regfile_we_lsu;
@@ -177,6 +194,7 @@ module riscv_ex_stage
 
   logic           alu_ready;
   logic           mult_ready;
+  logic           alu_approx_ready;
   logic           fpu_ready;
   logic           fpu_valid;
 
@@ -217,6 +235,9 @@ module riscv_ex_stage
         regfile_alu_wdata_fw_o = alu_result;
       if (mult_en_i)
         regfile_alu_wdata_fw_o = mult_result;
+      //PLACEHOLDER: insert write of approx ALU here
+      if (alu_approx_en_i)
+        regfile_alu_wdata_fw_o = alu_approx_result;
       if (csr_access_i)
         regfile_alu_wdata_fw_o = csr_rdata_i;
     end
@@ -332,6 +353,34 @@ module riscv_ex_stage
     .multicycle_o    ( mult_multicycle_o    ),
     .ready_o         ( mult_ready           ),
     .ex_ready_i      ( ex_ready_o           )
+  );
+
+  ////////////////////////////////////////////////////
+  // Approximate ALU
+  //
+  ////////////////////////////////////////////////////
+
+  riscv_alu_approx
+  #(
+    .MUL_BIT(MUL_BIT)
+  
+  )
+  alu_approx_i
+  (
+    .clk              ( clk                         ),
+    .rst_n            ( rst_n                       ),
+    .enable_i         ( alu_approx_en_i             ),
+    .operator_i       ( alu_approx_operator_i       ),
+    .approx_mask_i    ( alu_approx_mask_i           ),
+    .precision_mask_i ( alu_precision_mask_i        ), 
+    .operand_a_i      ( alu_approx_operand_a_i      ),
+    .operand_b_i      ( alu_approx_operand_b_i      ),
+    .operand_c_i      ( alu_approx_operand_c_i      ),
+    .short_signed_i   ( alu_approx_mult_signed_i    ),
+    .imm_i            ( alu_approx_mult_imm_i       ),
+    .dot_signed_i     ( alu_approx_dot_signed_i     ),
+    .result_o         ( alu_approx_result           ),
+    .ready_o          ( alu_approx_ready            )
   );
 
    generate
@@ -553,9 +602,9 @@ module riscv_ex_stage
   // As valid always goes to the right and ready to the left, and we are able
   // to finish branches without going to the WB stage, ex_valid does not
   // depend on ex_ready.
-  assign ex_ready_o = (~apu_stall & alu_ready & mult_ready & lsu_ready_ex_i
+  assign ex_ready_o = (~apu_stall & alu_ready & mult_ready & alu_approx_ready & lsu_ready_ex_i
                        & wb_ready_i & ~wb_contention & fpu_ready) | (branch_in_ex_i);
-  assign ex_valid_o = (apu_valid | alu_en_i | mult_en_i | csr_access_i | lsu_en_i)
-                       & (alu_ready & mult_ready & lsu_ready_ex_i & wb_ready_i);
+  assign ex_valid_o = (apu_valid | alu_en_i | mult_en_i | alu_approx_en_i | csr_access_i | lsu_en_i)
+                       & (alu_ready & mult_ready & alu_approx_ready & lsu_ready_ex_i & wb_ready_i);
 
 endmodule

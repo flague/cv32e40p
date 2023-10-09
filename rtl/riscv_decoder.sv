@@ -25,7 +25,7 @@
 //                                                                            //
 ////////////////////////////////////////////////////////////////////////////////
 
-`include "apu_macros.sv"
+`include "include/apu_macros.sv"
 
 import riscv_defines::*;
 
@@ -134,6 +134,18 @@ module riscv_decoder
   output logic [1:0]  csr_op_o,                // operation to perform on CSR
   input  PrivLvl_t    current_priv_lvl_i,      // The current privilege level
 
+  //PLACEHOLDER: current value of the CSR bits
+  input logic         approx_mul_i,            // configure the mult as approximate or exact
+  //input logic         approx_add_i,            // configure the add as approximate or exact
+  input logic         approx_mac_i,            // configure p.mac and p.msu as approximate or exact
+  input logic         approx_dot8_i,
+  input logic [N_BIT_APPR-1:0] approx_mask_i,
+  input logic [N_BIT_PREC-1:0] precision_mask_i,
+  //PLACEHOLDER: activation for approximate operators (ALU)
+  output logic        alu_approx_en_o,
+  output logic [APP_OP_WIDTH-1:0] alu_approx_operator_o,
+  output logic [N_BIT_APPR-1:0] approx_mask_o,
+  output logic [N_BIT_PREC-1:0] precision_mask_o,
   // LD/ST unit signals
   output logic        data_req_o,              // start transaction to data memory
   output logic        data_we_o,               // data memory write enable
@@ -185,6 +197,7 @@ module riscv_decoder
   logic [1:0] csr_op;
 
   logic       alu_en;
+  logic       alu_approx_en;
   logic       mult_int_en;
   logic       mult_dot_en;
   logic       apu_en;
@@ -214,6 +227,10 @@ module riscv_decoder
     jump_target_mux_sel_o       = JT_JAL;
 
     alu_en                      = 1'b1;
+    alu_approx_en               = 1'b0;     //PLACEHOLDER: always disable the approx ALU
+    alu_approx_operator_o       = APP_MULMAC;
+    approx_mask_o               = '1;
+    precision_mask_o            = '1;
     alu_operator_o              = ALU_SLTU;
     alu_op_a_mux_sel_o          = OP_A_REGA_OR_FWD;
     alu_op_b_mux_sel_o          = OP_B_REGB_OR_FWD;
@@ -522,7 +539,7 @@ module riscv_decoder
         rega_used_o         = 1'b1;
 
         unique case (instr_rdata_i[14:12])
-          3'b000: alu_operator_o = ALU_ADD;  // Add Immediate
+          3'b000: alu_operator_o = ALU_ADD;  // Add Immediate          
           3'b010: alu_operator_o = ALU_SLTS; // Set to one if Lower Than Immediate
           3'b011: alu_operator_o = ALU_SLTU; // Set to one if Lower Than Immediate Unsigned
           3'b100: alu_operator_o = ALU_XOR;  // Exclusive Or with Immediate
@@ -1084,7 +1101,7 @@ module riscv_decoder
           unique case ({instr_rdata_i[30:25], instr_rdata_i[14:12]})
             // RV32I ALU operations
             {6'b00_0000, 3'b000}: alu_operator_o = ALU_ADD;   // Add
-            {6'b10_0000, 3'b000}: alu_operator_o = ALU_SUB;   // Sub
+            {6'b10_0000, 3'b000}: alu_operator_o = ALU_SUB;   // Sub 
             {6'b00_0000, 3'b010}: alu_operator_o = ALU_SLTS;  // Set Lower Than
             {6'b00_0000, 3'b011}: alu_operator_o = ALU_SLTU;  // Set Lower Than Unsigned
             {6'b00_0000, 3'b100}: alu_operator_o = ALU_XOR;   // Xor
@@ -1093,14 +1110,25 @@ module riscv_decoder
             {6'b00_0000, 3'b001}: alu_operator_o = ALU_SLL;   // Shift Left Logical
             {6'b00_0000, 3'b101}: alu_operator_o = ALU_SRL;   // Shift Right Logical
             {6'b10_0000, 3'b101}: alu_operator_o = ALU_SRA;   // Shift Right Arithmetic
-
+            
             // supported RV32M instructions
             {6'b00_0001, 3'b000}: begin // mul
               alu_en          = 1'b0;
-              mult_int_en     = 1'b1;
-              mult_operator_o = MUL_MAC32;
               regc_mux_o      = REGC_ZERO;
+              if (~approx_mul_i) begin
+                mult_int_en     = 1'b1;
+                mult_operator_o = MUL_MAC32; 
+              end
+              else begin
+                // mult_int_approx_en =1'b1; use same signal for entire alu
+              // (mul compresa)
+                alu_approx_en   = 1'b1;
+                alu_approx_operator_o = APP_MULMAC;
+                approx_mask_o   = approx_mask_i;
+                precision_mask_o = precision_mask_i;
+              end
             end
+
             {6'b00_0001, 3'b001}: begin // mulh
               alu_en             = 1'b0;
               regc_used_o        = 1'b1;
@@ -1178,8 +1206,16 @@ module riscv_decoder
               alu_en          = 1'b0;
               regc_used_o     = 1'b1;
               regc_mux_o      = REGC_RD;
-              mult_int_en     = 1'b1;
-              mult_operator_o = MUL_MAC32;
+              if (approx_mac_i) begin
+                alu_approx_en = 1'b1;
+                alu_approx_operator_o = APP_MULMAC;
+                approx_mask_o   = approx_mask_i;
+                precision_mask_o = precision_mask_i;
+              end
+              else begin 
+                mult_int_en     = 1'b1;
+                mult_operator_o = MUL_MAC32;
+              end
               `USE_APU_INT_MULT
             end
             {6'b10_0001, 3'b001}: begin // p.msu
@@ -1958,13 +1994,20 @@ module riscv_decoder
 
             mult_imm_mux_o = MIMM_S3;
             regc_mux_o     = REGC_ZERO;
-            mult_int_en    = 1'b1;
 
-            if (instr_rdata_i[14])
-              mult_operator_o = MUL_IR;
-            else
-              mult_operator_o = MUL_I;
-
+            if (approx_mul_i && instr_rdata_i[14]==0 ) begin   //  does not support MUL_IR
+              alu_approx_en = 1'b1;
+              alu_approx_operator_o = APP_MULSMACS;
+              approx_mask_o   = approx_mask_i;
+              precision_mask_o = precision_mask_i;
+            end
+            else begin
+              mult_int_en     = 1'b1;
+              if (instr_rdata_i[14])
+                mult_operator_o = MUL_IR;
+              else
+                mult_operator_o = MUL_I;
+            end 
             `USE_APU_INT_MULT
           end
 
@@ -1977,13 +2020,21 @@ module riscv_decoder
             regc_used_o     = 1'b1;
             regc_mux_o      = REGC_RD;
             mult_imm_mux_o  = MIMM_S3;
-            mult_int_en     = 1'b1;
-
-            if (instr_rdata_i[14])
-              mult_operator_o = MUL_IR;
-            else
-              mult_operator_o = MUL_I;
-
+            ////macsN always implies
+            //a shift right
+            if (approx_mac_i && instr_rdata_i[14]==0) begin   //  does not support MUL_IR
+              alu_approx_en = 1'b1;
+              alu_approx_operator_o = APP_MULSMACS;
+              approx_mask_o   = approx_mask_i;
+              precision_mask_o = precision_mask_i;
+            end
+            else begin
+              mult_int_en     = 1'b1;
+              if (instr_rdata_i[14])
+                mult_operator_o = MUL_IR;
+              else
+                mult_operator_o = MUL_I;
+            end 
             `USE_APU_INT_MULT
           end
 
@@ -2136,46 +2187,94 @@ module riscv_decoder
 
           6'b10000_0: begin // pv.dotup
             alu_en            = 1'b0;
-            mult_dot_en       = 1'b1;
             mult_dot_signed_o = 2'b00;
             imm_b_mux_sel_o   = IMMB_VU;
+            if(instr_rdata_i[12] ==1'b1 && approx_dot8_i == 1'b1) // first condition as only mul8 mode is supported 
+            begin
+              alu_approx_en = 1'b1;
+              alu_approx_operator_o = APP_DOT8;
+              approx_mask_o   = approx_mask_i;
+              precision_mask_o = precision_mask_i;
+            end
+            if (~approx_dot8_i)
+              mult_dot_en       = 1'b1;
             `USE_APU_DSP_MULT
           end
           6'b10001_0: begin // pv.dotusp
             alu_en            = 1'b0;
-            mult_dot_en       = 1'b1;
             mult_dot_signed_o = 2'b01;
+            if(instr_rdata_i[12] ==1'b1 && approx_dot8_i == 1'b1) // first condition as only mul8 mode is supported 
+            begin
+              alu_approx_en = 1'b1;
+              alu_approx_operator_o = APP_DOT8;
+              approx_mask_o   = approx_mask_i;
+              precision_mask_o = precision_mask_i;
+            end
+            if (~approx_dot8_i)
+              mult_dot_en       = 1'b1;
             `USE_APU_DSP_MULT
           end
           6'b10011_0: begin // pv.dotsp
             alu_en            = 1'b0;
-            mult_dot_en       = 1'b1;
             mult_dot_signed_o = 2'b11;
+            if(instr_rdata_i[12] ==1'b1 && approx_dot8_i == 1'b1) // first condition as only mul8 mode is supported 
+            begin
+              alu_approx_en = 1'b1;
+              alu_approx_operator_o = APP_DOT8;
+              approx_mask_o   = approx_mask_i;
+              precision_mask_o = precision_mask_i;
+            end
+            if (~approx_dot8_i)
+              mult_dot_en       = 1'b1;
             `USE_APU_DSP_MULT
           end
           6'b10100_0: begin // pv.sdotup
             alu_en            = 1'b0;
-            mult_dot_en       = 1'b1;
             mult_dot_signed_o = 2'b00;
             regc_used_o       = 1'b1;
             regc_mux_o        = REGC_RD;
             imm_b_mux_sel_o   = IMMB_VU;
+            if(instr_rdata_i[12] ==1'b1 && approx_dot8_i == 1'b1) // first condition as only mul8 mode is supported 
+            begin
+              alu_approx_en = 1'b1;
+              alu_approx_operator_o = APP_DOT8;
+              approx_mask_o   = approx_mask_i;
+              precision_mask_o = precision_mask_i;
+            end
+            if (~approx_dot8_i)
+              mult_dot_en       = 1'b1;
             `USE_APU_DSP_MULT
           end
           6'b10101_0: begin // pv.sdotusp
             alu_en            = 1'b0;
-            mult_dot_en       = 1'b1;
             mult_dot_signed_o = 2'b01;
             regc_used_o       = 1'b1;
             regc_mux_o        = REGC_RD;
+            if(instr_rdata_i[12] ==1'b1 && approx_dot8_i == 1'b1) // first condition as only mul8 mode is supported 
+            begin
+              alu_approx_en = 1'b1;
+              alu_approx_operator_o = APP_DOT8;
+              approx_mask_o   = approx_mask_i;
+              precision_mask_o = precision_mask_i;
+            end
+            if (~approx_dot8_i)
+              mult_dot_en       = 1'b1;
             `USE_APU_DSP_MULT
           end
           6'b10111_0: begin // pv.sdotsp
             alu_en            = 1'b0;
-            mult_dot_en       = 1'b1;
             mult_dot_signed_o = 2'b11;
             regc_used_o       = 1'b1;
             regc_mux_o        = REGC_RD;
+            if(instr_rdata_i[12] ==1'b1 && approx_dot8_i == 1'b1) // first condition as only mul8 mode is supported 
+            begin
+              alu_approx_en = 1'b1;
+              alu_approx_operator_o = APP_DOT8;
+              approx_mask_o   = approx_mask_i;
+              precision_mask_o = precision_mask_i;
+            end
+            if (~approx_dot8_i)
+              mult_dot_en       = 1'b1;
             `USE_APU_DSP_MULT
           end
 
@@ -2462,16 +2561,18 @@ module riscv_decoder
   end
 
   // deassert we signals (in case of stalls)
-  assign alu_en_o          = (deassert_we_i) ? 1'b0          : alu_en;
-  assign apu_en_o          = (deassert_we_i) ? 1'b0          : apu_en;
-  assign mult_int_en_o     = (deassert_we_i) ? 1'b0          : mult_int_en;
-  assign mult_dot_en_o     = (deassert_we_i) ? 1'b0          : mult_dot_en;
-  assign regfile_mem_we_o  = (deassert_we_i) ? 1'b0          : regfile_mem_we;
-  assign regfile_alu_we_o  = (deassert_we_i) ? 1'b0          : regfile_alu_we;
-  assign data_req_o        = (deassert_we_i) ? 1'b0          : data_req;
-  assign hwloop_we_o       = (deassert_we_i) ? 3'b0          : hwloop_we;
-  assign csr_op_o          = (deassert_we_i) ? CSR_OP_NONE   : csr_op;
-  assign jump_in_id_o      = (deassert_we_i) ? BRANCH_NONE   : jump_in_id;
+  assign alu_en_o               = (deassert_we_i) ? 1'b0          : alu_en;
+  assign alu_approx_en_o        = (deassert_we_i) ? 1'b0          : alu_approx_en;    //PLACEHOLDER
+  assign apu_en_o               = (deassert_we_i) ? 1'b0          : apu_en;
+  assign mult_int_en_o          = (deassert_we_i) ? 1'b0          : mult_int_en;
+  //assign mult_int_approx_en_o   = (deassert_we_i) ? 1'b0          : mult_int_approx_en; //PLACEHOLDER
+  assign mult_dot_en_o          = (deassert_we_i) ? 1'b0          : mult_dot_en;
+  assign regfile_mem_we_o       = (deassert_we_i) ? 1'b0          : regfile_mem_we;
+  assign regfile_alu_we_o       = (deassert_we_i) ? 1'b0          : regfile_alu_we;
+  assign data_req_o             = (deassert_we_i) ? 1'b0          : data_req;
+  assign hwloop_we_o            = (deassert_we_i) ? 3'b0          : hwloop_we;
+  assign csr_op_o               = (deassert_we_i) ? CSR_OP_NONE   : csr_op;
+  assign jump_in_id_o           = (deassert_we_i) ? BRANCH_NONE   : jump_in_id;
 
   assign jump_in_dec_o         = jump_in_id;
   assign regfile_alu_we_dec_o  = regfile_alu_we;
